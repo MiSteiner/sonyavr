@@ -12,6 +12,10 @@ import asyncio
 
 import sys
 
+from xml.etree import ElementTree
+
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
 from .const import (
     MAX_VOLUME,
     MIN_VOLUME,
@@ -452,6 +456,37 @@ SOURCE_MENU_MAP = {
     "internetServices": "Internet Services",
     # 	"screenMirroring": "Screen Mirroring",
     # 	"googleCast": "Google Cast",
+}
+
+# Maps source names reported by the receiver's CERS getSystemInformation
+# endpoint (port 50001) to this integration's internal source keys, so the
+# source list can be limited to the inputs a given model actually has.
+CERS_SOURCE_TO_KEYS = {
+    "BD": ["bd"],
+    "DVD": ["dvd"],
+    "BD/DVD": ["bd", "dvd"],
+    "GAME": ["game"],
+    "SAT/CATV": ["satCaTV"],
+    "VIDEO 1": ["video1"],
+    "VIDEO 2": ["video2"],
+    "VIDEO 3": ["video3"],
+    "VIDEO 4": ["video4"],
+    "TV": ["tv"],
+    "SA-CD/CD": ["saCd"],
+    "SA-CD": ["saCd"],
+    "CD": ["saCd"],
+    "MD/TAPE": ["md"],
+    "PHONO": ["phono"],
+    "MULTI IN": ["multi"],
+    "TUNER": ["fmTuner", "amTuner"],
+    "FM TUNER": ["fmTuner"],
+    "AM TUNER": ["amTuner"],
+    "USB": ["usb"],
+    "BLUETOOTH": ["bluetooth"],
+    "HOME NETWORK": ["homeNetwork"],
+    "SEN": ["internetServices"],
+    "INTERNET SERVICES": ["internetServices"],
+    "SCREEN MIRRORING": ["screenMirroring"],
 }
 
 SOUND_FIELD_MENU_MAP = {
@@ -1290,6 +1325,8 @@ class SonyAVR:
         # sensor, ...) so new entities can refresh on feedback without adding a
         # dedicated callback slot for each one.
         self._update_listeners = []
+        # Source list as reported by the AVR (None = use the full static list).
+        self._available_sources = None
 
         self.state_service.volume_model = None
         self.state_service.volume_min = 0
@@ -1467,8 +1504,42 @@ class SonyAVR:
         _LOGGER.debug("Stopping Ping Watcher")
         await self.ping_watcher.stop()
 
+    async def async_load_sources(self):
+        """Query the AVR for the inputs it actually has and filter the list.
+
+        Uses the CERS getSystemInformation endpoint (always on port 50001).
+        On any failure the full static source list is kept (no change).
+        """
+        url = f"http://{self.device_service.ip}:50001/cers/getSystemInformation"
+        try:
+            session = async_get_clientsession(self._hass)
+            async with asyncio.timeout(8):
+                resp = await session.get(url)
+                text = await resp.text()
+            root = ElementTree.fromstring(text)
+            reported = [e.text.strip() for e in root.iter("source") if e.text]
+        except Exception as err:  # noqa: BLE001 - never break setup over this
+            _LOGGER.debug("Could not load source list from AVR: %s", err)
+            return
+
+        keys = []
+        for name in reported:
+            mapped = CERS_SOURCE_TO_KEYS.get(name.upper())
+            if not mapped:
+                _LOGGER.debug("Unmapped AVR source reported: %s", name)
+                continue
+            for key in mapped:
+                if key in SOURCE_MENU_MAP and key not in keys:
+                    keys.append(key)
+
+        if keys:
+            self._available_sources = [SOURCE_MENU_MAP[key] for key in keys]
+            _LOGGER.debug("Model source list: %s", self._available_sources)
+
     @property
     def sources(self):
+        if self._available_sources:
+            return tuple(self._available_sources)
         return tuple(SOURCE_MENU_MAP.values())
 
     @property

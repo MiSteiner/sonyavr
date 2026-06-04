@@ -104,6 +104,9 @@ class SonyAVRDevice(MediaPlayerEntity):
         )
         await self._device.command_service.async_connect()
 
+        # Limit the source list to the inputs this model actually reports.
+        await self._device.async_load_sources()
+
         await asyncio.sleep(1)
 
         if self._device.state_service.power is None:

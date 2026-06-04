@@ -122,6 +122,22 @@ CMD_POWER_OFF = bytearray([0x02, 0x04, 0xA0, 0x60, 0x00, 0x00, 0x00])
 CMD_HDMIOUT_ON = bytearray([0x02, 0x03, 0xA0, 0x45, 0x00, 0x00])
 CMD_HDMIOUT_OFF = bytearray([0x02, 0x03, 0xA0, 0x45, 0x03, 0x00])
 
+# HDMI monitor output select.  Byte 4 chooses the output terminal.
+# Verified on STR-DN1040: 0x00=A, 0x01=B, 0x02=A+B, 0x03=Off.  The receiver
+# does not report this value back (no notification/query), so the select is
+# optimistic - it reflects the last value we set.
+HDMIOUT_A = "A"
+HDMIOUT_B = "B"
+HDMIOUT_AB = "A+B"
+HDMIOUT_OFF = "Off"
+
+CMD_HDMIOUT_MAP = {
+    HDMIOUT_A: bytearray([0x02, 0x03, 0xA0, 0x45, 0x00, 0x00]),
+    HDMIOUT_B: bytearray([0x02, 0x03, 0xA0, 0x45, 0x01, 0x00]),
+    HDMIOUT_AB: bytearray([0x02, 0x03, 0xA0, 0x45, 0x02, 0x00]),
+    HDMIOUT_OFF: bytearray([0x02, 0x03, 0xA0, 0x45, 0x03, 0x00]),
+}
+
 # Last byte seems to be zero (but was a checksum)
 CMD_SOUND_FIELD_MAP = {
     "twoChannelStereo": bytearray([0x02, 0x03, 0xA3, 0x42, 0x00, 0x00]),
@@ -552,6 +568,7 @@ class StateService:
         self.power: bool | None = None
         self.muted: bool | None = None
         self.hdmiout: bool | None = None
+        self.hdmiout_select: str | None = None
         self.source: str | None = None
         self.sound_field: str | None = None
         self.pure_direct: bool | None = None
@@ -767,6 +784,14 @@ class CommandService:
             else:
                 await self.async_hdmiout_on()
                 self.state_service.update_hdmiout(True)
+
+    async def async_set_hdmiout(self, value):
+        if value not in CMD_HDMIOUT_MAP:
+            _LOGGER.error('HDMI output "%s" is not a valid option', value)
+            return
+        await self.async_send_command(CMD_HDMIOUT_MAP[value])
+        # The AVR does not report HDMI output state, so track it optimistically.
+        self.state_service.hdmiout_select = value
 
     async def async_set_volume(self, vol):
         if self.state_service.volume_model == 3:
@@ -1527,3 +1552,14 @@ class SonyAVR:
         for key, value in SOUND_FIELD_MENU_MAP.items():
             if source == value:
                 await self.command_service.async_select_sound_field(key)
+
+    @property
+    def hdmiout_options(self):
+        return tuple(CMD_HDMIOUT_MAP.keys())
+
+    @property
+    def hdmiout_select(self):
+        return self.state_service.hdmiout_select
+
+    async def async_set_hdmiout(self, value) -> None:
+        await self.command_service.async_set_hdmiout(value)

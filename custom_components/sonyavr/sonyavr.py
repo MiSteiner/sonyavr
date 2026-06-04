@@ -1210,6 +1210,8 @@ class FeedbackWatcher:
                         self.sony_avr._remote_update_cb()
                     if self.sony_avr._sensor_update_cb:
                         self.sony_avr._sensor_update_cb()
+                    for listener in self.sony_avr._update_listeners:
+                        listener()
 
             except Exception:
                 _LOGGER.exception("Failed to process data: reconnecting...")
@@ -1312,6 +1314,10 @@ class SonyAVR:
         self._update_cb = None
         self._remote_update_cb = None
         self._sensor_update_cb = None
+        # Generic listeners for additional platforms (select, switch, binary
+        # sensor, ...) so new entities can refresh on feedback without adding a
+        # dedicated callback slot for each one.
+        self._update_listeners = []
 
         self.state_service.volume_model = None
         self.state_service.volume_min = 0
@@ -1428,6 +1434,14 @@ class SonyAVR:
 
     def set_sensor_update_cb(self, cb):
         self._sensor_update_cb = cb
+
+    def add_update_listener(self, cb):
+        if cb not in self._update_listeners:
+            self._update_listeners.append(cb)
+
+    def remove_update_listener(self, cb):
+        if cb in self._update_listeners:
+            self._update_listeners.remove(cb)
 
     async def async_update_status(self):
         _LOGGER.debug("Updating Initial States")

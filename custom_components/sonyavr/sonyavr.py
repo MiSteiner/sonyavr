@@ -119,9 +119,6 @@ CMD_UNMUTE = bytearray([0x02, 0x04, 0xA0, 0x53, 0x00, 0x00, 0x09])
 CMD_POWER_ON = bytearray([0x02, 0x04, 0xA0, 0x60, 0x00, 0x01, 0x00])
 CMD_POWER_OFF = bytearray([0x02, 0x04, 0xA0, 0x60, 0x00, 0x00, 0x00])
 
-CMD_HDMIOUT_ON = bytearray([0x02, 0x03, 0xA0, 0x45, 0x00, 0x00])
-CMD_HDMIOUT_OFF = bytearray([0x02, 0x03, 0xA0, 0x45, 0x03, 0x00])
-
 # HDMI monitor output select.  Byte 4 chooses the output terminal.
 # Verified on STR-DN1040: 0x00=A, 0x01=B, 0x02=A+B, 0x03=Off.  The receiver
 # does not report this value back (no notification/query), so the select is
@@ -526,7 +523,6 @@ class StateService:
 
     states = {
         "power": None,
-        "hdmiout": True,
         "volume": LOW_VOLUME,
         "muted": None,
         "source": None,
@@ -545,7 +541,6 @@ class StateService:
 
     notifications = {
         "power": True,
-        "hdmiout": True,
         "volume": False,
         "muted": True,
         "source": True,
@@ -567,7 +562,6 @@ class StateService:
         self.volume_range: float
         self.power: bool | None = None
         self.muted: bool | None = None
-        self.hdmiout: bool | None = None
         self.hdmiout_select: str | None = None
         self.source: str | None = None
         self.sound_field: str | None = None
@@ -589,13 +583,6 @@ class StateService:
             self.power = power
             if changed:
                 _LOGGER.debug("Power state: %s" % power)
-
-    def update_hdmiout(self, hdmiout, state_only=False):
-        if self.initialized:
-            changed = hdmiout != self.hdmiout
-            self.hdmiout = hdmiout
-            if changed:
-                _LOGGER.debug("HDMI Out: %s" % hdmiout)
 
     def update_volume(self, vol):
         if self.initialized:
@@ -769,21 +756,6 @@ class CommandService:
             else:
                 await self.async_power_on()
                 self.state_service.update_power(True)
-
-    async def async_hdmiout_on(self):
-        await self.async_send_command(CMD_HDMIOUT_ON)
-
-    async def async_hdmiout_off(self):
-        await self.async_send_command(CMD_HDMIOUT_OFF)
-
-    async def async_toggle_hdmiout(self):
-        if self.initialized:
-            if self.state_service.hdmiout:
-                await self.async_hdmiout_off()
-                self.state_service.update_hdmiout(False)
-            else:
-                await self.async_hdmiout_on()
-                self.state_service.update_hdmiout(True)
 
     async def async_set_hdmiout(self, value):
         if value not in CMD_HDMIOUT_MAP:

@@ -17,6 +17,7 @@ PLATFORMS = [
     Platform.REMOTE,
     Platform.SENSOR,
     Platform.SELECT,
+    Platform.BINARY_SENSOR,
 ]
 
 

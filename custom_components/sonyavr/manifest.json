@@ -14,5 +14,10 @@
   "requirements": [
     "asyncping3"
   ],
+  "ssdp": [
+    {
+      "st": "urn:schemas-sony-com:service:X_CIS:1"
+    }
+  ],
   "version": "1.9.b9"
 }

@@ -14,7 +14,15 @@
         },
         "description": "Enter the details for your AVR.",
         "title": "Sony AVR"
+      },
+      "confirm": {
+        "description": "Do you want to set up {name}?",
+        "title": "Sony AVR"
       }
+    },
+    "abort": {
+      "already_configured": "This receiver is already configured.",
+      "cannot_connect": "Could not determine the receiver's address."
     }
   },
   "options": {

@@ -112,16 +112,24 @@ class SonyAVRDevice(MediaPlayerEntity):
         if self._device.state_service.power is None:
             _LOGGER.debug("Power state is uninitialised, so initialising all states")
             _power_state = await self._device.async_get_power_state()
-            _power_cycle = self._config_entry.options.get(CONF_POWER_CYCLE_INIT, True)
+            _power_cycle = self._config_entry.options.get(CONF_POWER_CYCLE_INIT, False)
+            _was_off = not _power_state
 
-            # Turn on and off to force the feedback
-            if not _power_state and _power_cycle:
+            # Optionally wake a powered-off AVR so its state can be read.
+            if _was_off and _power_cycle:
                 _LOGGER.debug("_power_state is False, so turning on")
                 await self._device.async_turn_on()
                 await asyncio.sleep(20)
-            await self._device.async_update_status()
-            _LOGGER.debug("Device states initialised")
-            if not _power_state and _power_cycle:
+                _power_state = True
+
+            if _power_state:
+                # Read what we can without provoking, then nudge the rest.
+                await self._device.async_query_sound_settings()
+                await self._device.async_update_status()
+                _LOGGER.debug("Device states initialised")
+            # else: leave states unknown until the AVR is next turned on
+
+            if _was_off and _power_cycle:
                 await asyncio.sleep(1)
                 await self._device.async_turn_off()
 

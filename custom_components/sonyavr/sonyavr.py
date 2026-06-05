@@ -139,6 +139,17 @@ CMD_HDMIOUT_MAP = {
     HDMIOUT_OFF: bytearray([0x02, 0x03, 0xA0, 0x45, 0x03, 0x00]),
 }
 
+# Query (read) commands.  Unlike the rest of the protocol these elicit an
+# immediate reply ON THE SOCKET THE QUERY WAS SENT ON (not the notification
+# stream), so they must be sent via CommandService.async_query.  A powered-off
+# AVR rejects them with a single 0xFE, which doubles as power detection.
+#   sound field      reply: 0x02,0x04,0xAB,0x82,<field>,0x00
+#   sound optimizer  reply: 0x02,0x04,0xAB,0x92,0x00,<0=off,1=normal,2=low>
+#   auto phase       reply: 0x02,0x04,0xAB,0x97,<flag>,<2=auto,0=off>
+CMD_QUERY_SOUND_FIELD = bytearray([0x02, 0x04, 0xA3, 0x82, 0x48, 0x00, 0x8F])
+CMD_QUERY_SOUND_OPTIMIZER = bytearray([0x02, 0x04, 0xA3, 0x92, 0x48, 0x00, 0x7F])
+CMD_QUERY_AUTO_PHASE = bytearray([0x02, 0x04, 0xA3, 0x97, 0x48, 0x00, 0x7A])
+
 # Last byte seems to be zero (but was a checksum)
 CMD_SOUND_FIELD_MAP = {
     "twoChannelStereo": bytearray([0x02, 0x03, 0xA3, 0x42, 0x00, 0x00]),
@@ -776,6 +787,25 @@ class CommandService:
             if self.command_writer is None:
                 _LOGGER.critical("Command Socket doesn't exist")
             await asyncio.sleep(50.0 / 1000.0)
+
+    async def async_query(self, packet, timeout=2.0):
+        """Send a query and return its reply bytes (or None).
+
+        Query replies come back on the command socket itself - not the
+        notification stream - so we read the response here.  Returns None on
+        timeout/error; a powered-off AVR replies with a single 0xFE.
+        """
+        if self.command_writer is None or self.command_reader is None:
+            return None
+        try:
+            self.command_writer.write(packet)
+            await self.command_writer.drain()
+            return await asyncio.wait_for(self.command_reader.read(256), timeout=timeout)
+        except (asyncio.TimeoutError, asyncio.IncompleteReadError):
+            return None
+        except Exception:
+            _LOGGER.debug("Query failed", exc_info=True)
+            return None
 
     async def async_power_on(self):
         await self.async_send_command(CMD_POWER_ON)
@@ -1452,14 +1482,39 @@ class SonyAVR:
         if cb in self._update_listeners:
             self._update_listeners.remove(cb)
 
+    def _apply_sound_field_query(self, resp):
+        """Update sound field state from a sound-field query reply."""
+        if not resp or len(resp) < 6 or resp[2] != 0xAB or resp[3] != 0x82:
+            return False
+        for key, fb in FEEDBACK_SOUND_FIELD_MAP.items():
+            if fb[:6] == resp[:6]:
+                self.state_service.update_sound_field(key, state_only=True)
+                return True
+        return False
+
+    async def async_query_sound_settings(self):
+        """Read the queryable sound settings without provoking the AVR.
+
+        Sound field / optimizer / auto-phase support a direct read; the core
+        states (power/source/volume/mute) do not and still need a nudge.
+        """
+        self._apply_sound_field_query(
+            await self.command_service.async_query(CMD_QUERY_SOUND_FIELD)
+        )
+        resp = await self.command_service.async_query(CMD_QUERY_SOUND_OPTIMIZER)
+        if resp and len(resp) >= 6 and resp[2] == 0xAB and resp[3] == 0x92:
+            self.state_service.update_sound_optimizer(
+                {0: "off", 1: "normal", 2: "low"}.get(resp[5])
+            )
+        resp = await self.command_service.async_query(CMD_QUERY_AUTO_PHASE)
+        if resp and len(resp) >= 6 and resp[2] == 0xAB and resp[3] == 0x97:
+            self.state_service.update_auto_phase_matching(resp[5] == 0x02)
+
     async def async_update_status(self):
         _LOGGER.debug("Updating Initial States")
-        if self.state_service.muted is None:
-            _LOGGER.debug("Initialising Mute State")
-            await self.command_service.async_mute()
-            await asyncio.sleep(1.0)
-            await self.command_service.async_unmute()
-            await asyncio.sleep(1.0)
+        # Volume and source have no read command, so nudge them to provoke a
+        # notification.  The source nudge also reports power + mute, so no
+        # separate (audible) mute probe is needed.
         _LOGGER.debug("Initialising Volume State")
         await self.command_service.async_send_command(CMD_VOLUME_DOWN)
         await asyncio.sleep(1.0)
@@ -1476,17 +1531,17 @@ class SonyAVR:
 
     async def async_get_power_state(self):
         _LOGGER.debug("Getting Power State")
-        await self.command_service.async_send_command(CMD_MUTE)
-        await asyncio.sleep(1.0)
-
-        if self.state_service.muted is None:
-            _LOGGER.debug("No response from AVR, so assuming power is off")
-            return False
-        else:
-            _LOGGER.debug("AVR responded to mute, so is powered on")
-            await self.command_service.async_send_command(CMD_UNMUTE)
-            await asyncio.sleep(1.0)
+        # A read-only query is answered only when the AVR is on; a powered-off
+        # AVR replies with 0xFE (or nothing).  This replaces the old audible
+        # mute/unmute probe and captures the sound field for free.
+        resp = await self.command_service.async_query(CMD_QUERY_SOUND_FIELD)
+        if resp and len(resp) >= 6 and resp[2] == 0xAB and resp[3] == 0x82:
+            _LOGGER.debug("AVR answered query, so is powered on")
+            self.state_service.update_power(True, True)
+            self._apply_sound_field_query(resp)
             return True
+        _LOGGER.debug("No query response, so assuming power is off")
+        return False
 
     async def run_notifier(self):
         _LOGGER.debug("Setting up Sony AVR Notify Listener")

@@ -48,7 +48,7 @@ OPTIONS_SCHEMA = vol.Schema(
             ),
             vol.Coerce(int),
         ),
-        vol.Optional(CONF_POWER_CYCLE_INIT, default=True): BooleanSelector(),
+        vol.Optional(CONF_POWER_CYCLE_INIT, default=False): BooleanSelector(),
     }
 )
 
@@ -164,7 +164,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                         CONF_PING_INTERVAL, 60
                     ),
                     CONF_POWER_CYCLE_INIT: self.config_entry.options.get(
-                        CONF_POWER_CYCLE_INIT, True
+                        CONF_POWER_CYCLE_INIT, False
                     ),
                 },
             ),

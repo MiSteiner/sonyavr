@@ -4,6 +4,7 @@ import logging
 
 from homeassistant import config_entries, core
 from homeassistant.components.select import SelectEntity
+from homeassistant.core import callback
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.restore_state import RestoreEntity
 
@@ -47,12 +48,21 @@ class SonyAVRHDMIOutputSelect(SelectEntity, RestoreEntity):
         self._unique_id = self._base_id + "_hdmi_output"
 
     async def async_added_to_hass(self) -> None:
-        """Restore the last selected output (the device can't report it)."""
+        """Restore the last selected output and subscribe to state updates."""
         await super().async_added_to_hass()
         if self._device.hdmiout_select is None:
             last = await self.async_get_last_state()
             if last and last.state in self._device.hdmiout_options:
                 self._device.state_service.hdmiout_select = last.state
+        # Re-render on power changes so availability/current option stay correct.
+        self._device.add_update_listener(self.async_update_callback)
+
+    async def async_will_remove_from_hass(self) -> None:
+        self._device.remove_update_listener(self.async_update_callback)
+
+    @callback
+    def async_update_callback(self, reason=False):
+        self.async_schedule_update_ha_state()
 
     @property
     def should_poll(self):

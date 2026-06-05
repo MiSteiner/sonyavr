@@ -1044,7 +1044,11 @@ class FeedbackWatcher:
             if source_feedback[0][:6] == data[:6]:
                 _LOGGER.debug("Source matched %s", source)
                 _LOGGER.debug("Extra data %s", binascii.hexlify(data[-3:], ":"))
-                self.state_service.update_source(source)
+                # Don't assume power-on just because a source was reported - the
+                # power-off notification is itself a source packet. Power is set
+                # only from the suffix below; if it's unrecognised, leave power
+                # as-is rather than wrongly flipping it on.
+                self.state_service.update_source(source, state_only=True)
                 # The command also contains the power and muted states
                 if source_feedback[3] == data[-3:] or source_feedback[6] == data[-3:]:
                     _LOGGER.debug("Power Off")
@@ -1396,12 +1400,24 @@ class SonyAVR:
         self.state_service.initialized = initialized
         self.command_service.initialized = initialized
 
+    def _notify_entities(self):
+        """Refresh all subscribed entities (used after optimistic changes)."""
+        for cb in (self._update_cb, self._remote_update_cb, self._sensor_update_cb):
+            if cb:
+                cb()
+        for listener in self._update_listeners:
+            listener()
+
     async def async_turn_on(self) -> None:
-        # await self._device.async_turn_on()
         await self.command_service.async_power_on()
+        # Reflect the command immediately; a feedback packet confirms it later.
+        self.state_service.update_power(True)
+        self._notify_entities()
 
     async def async_turn_off(self) -> None:
         await self.command_service.async_power_off()
+        self.state_service.update_power(False)
+        self._notify_entities()
 
     async def async_mute_on(self) -> None:
         # await self._device.async_turn_on()

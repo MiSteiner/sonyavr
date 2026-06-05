@@ -5,6 +5,7 @@ import logging
 from homeassistant import config_entries, core
 from homeassistant.components.select import SelectEntity
 from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.helpers.restore_state import RestoreEntity
 
 from .const import DOMAIN
 
@@ -26,11 +27,12 @@ async def async_setup_entry(
     async_add_entities([SonyAVRHDMIOutputSelect(sonyavr, hass)])
 
 
-class SonyAVRHDMIOutputSelect(SelectEntity):
+class SonyAVRHDMIOutputSelect(SelectEntity, RestoreEntity):
     """Selects the HDMI monitor output (A / B / A+B / Off).
 
-    The receiver accepts the command but never reports the current output, so
-    this entity is optimistic - it shows the last value we set.
+    The receiver accepts the command but never reports the current output (no
+    query, no notification), so this is a write-only, optimistic control: it
+    shows the last value we sent and restores it across restarts.
     """
 
     _attr_icon = "mdi:hdmi-port"
@@ -43,6 +45,14 @@ class SonyAVRHDMIOutputSelect(SelectEntity):
             "-", "_"
         ).replace(":", "_")
         self._unique_id = self._base_id + "_hdmi_output"
+
+    async def async_added_to_hass(self) -> None:
+        """Restore the last selected output (the device can't report it)."""
+        await super().async_added_to_hass()
+        if self._device.hdmiout_select is None:
+            last = await self.async_get_last_state()
+            if last and last.state in self._device.hdmiout_options:
+                self._device.state_service.hdmiout_select = last.state
 
     @property
     def should_poll(self):

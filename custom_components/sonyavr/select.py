@@ -49,6 +49,12 @@ class SonyAVRHDMIOutputSelect(SelectEntity):
         return False
 
     @property
+    def available(self) -> bool:
+        # HDMI output can only be commanded while the AVR is on, and the device
+        # never reports it back - so this is a write-only, optimistic control.
+        return bool(self._device.state_service.power)
+
+    @property
     def name(self):
         return "HDMI Output"
 

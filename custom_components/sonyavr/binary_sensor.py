@@ -12,9 +12,10 @@ from .const import DOMAIN
 _LOGGER = logging.getLogger(__name__)
 
 # (key, friendly name, state_service attribute, icon)
+# NOTE: Pure Direct and Auto Standby were dropped - the STR-DN1040 neither
+# reports them on change nor answers a query for them, so they could only ever
+# read "unknown".  Auto Phase Matching is kept because it IS queryable.
 BINARY_SENSORS = (
-    ("pure_direct", "Pure Direct", "pure_direct", "mdi:speaker"),
-    ("auto_standby", "Auto Standby", "auto_standby", "mdi:timer-cog-outline"),
     (
         "auto_phase_matching",
         "Auto Phase Matching",
@@ -78,6 +79,11 @@ class SonyAVRBinarySensor(BinarySensorEntity):
     @property
     def should_poll(self):
         return False
+
+    @property
+    def available(self) -> bool:
+        # Only meaningful when the receiver is on.
+        return bool(self._device.state_service.power)
 
     @property
     def name(self):

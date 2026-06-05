@@ -150,6 +150,10 @@ class _SonyAVRBaseSensor(SensorEntity):
         return False
 
     @property
+    def available(self) -> bool:
+        return bool(self._device.state_service.power)
+
+    @property
     def name(self):
         return self._name
 

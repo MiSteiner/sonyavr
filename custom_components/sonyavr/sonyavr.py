@@ -831,6 +831,12 @@ class CommandService:
         self.state_service.hdmiout_select = value
 
     async def async_set_volume(self, vol):
+        if self.state_service.volume_model is None:
+            # The volume model/range isn't known yet (AVR was off at startup);
+            # building a command now would be wrong. State init runs when the
+            # AVR comes on, so just skip rather than send a bad value.
+            _LOGGER.debug("Volume model unknown; ignoring set_volume %s", vol)
+            return
         if self.state_service.volume_model == 3:
             # Normal Volume Model
             cmd = bytearray(
@@ -861,6 +867,7 @@ class CommandService:
                 if _vol > 0
                 else int(_vol) + 256 - (1 if (vol % 1) == 0.5 else 0)
             )
+            _vol_byte = max(0, min(255, _vol_byte))  # never overflow the byte
 
             cmd = bytearray(
                 [
@@ -1253,6 +1260,18 @@ class FeedbackWatcher:
                         self.sony_avr._sensor_update_cb()
                     for listener in self.sony_avr._update_listeners:
                         listener()
+                    # If the AVR is on but we never learned its volume model
+                    # (e.g. it was in standby at HA start, so it was never
+                    # provoked), initialise the remaining states now.
+                    if (
+                        self.state_service.power
+                        and self.state_service.volume_model is None
+                        and not self.sony_avr._initializing
+                    ):
+                        self.sony_avr._initializing = True
+                        self.sony_avr._hass.async_create_task(
+                            self.sony_avr._async_late_init()
+                        )
 
             except Exception:
                 _LOGGER.exception("Failed to process data: reconnecting...")
@@ -1359,6 +1378,8 @@ class SonyAVR:
         # sensor, ...) so new entities can refresh on feedback without adding a
         # dedicated callback slot for each one.
         self._update_listeners = []
+        # Guards the on-power re-initialisation so it only runs once at a time.
+        self._initializing = False
         # Source list as reported by the AVR (None = use the full static list).
         self._available_sources = None
 
@@ -1507,6 +1528,21 @@ class SonyAVR:
                 self.state_service.update_sound_field(key, state_only=True)
                 return True
         return False
+
+    async def _async_late_init(self):
+        """Initialise states when the AVR turns on after HA started.
+
+        With power-cycle-on-restart off, an AVR that was in standby at startup
+        is never provoked, so the volume model/range stays unknown. Run the
+        normal init once it actually comes on.
+        """
+        try:
+            await self.async_query_sound_settings()
+            await self.async_update_status()
+        except Exception:
+            _LOGGER.debug("Late init failed", exc_info=True)
+        finally:
+            self._initializing = False
 
     async def async_query_sound_settings(self):
         """Read the queryable sound settings without provoking the AVR.
